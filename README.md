@@ -13,7 +13,7 @@ uv sync
 ### Build a standalone Windows .exe
 
 ```bash
-uv run pyinstaller --onefile --name encrypt-o-matic src/encrypt_o_matic/main.py
+uv run pyinstaller --onefile --name encrypt-o-matic --paths src entry.py
 ```
 
 The built executable will be in `dist/encrypt-o-matic.exe`.
@@ -45,7 +45,7 @@ encrypt-o-matic.exe app.exe AES 10 0-100000 60
 
 This encrypts `app.exe` with AES, adds 10MB of padding, does the custom operation from 0 to 100000, and locks it for 60 minutes. You'll be asked to set a master password.
 
-The original file is kept, and the encrypted version is saved as `app.exe.encrypted`.
+The original file is removed, and the encrypted version is saved as `app.exe.encrypted`.
 
 ### Decrypting
 
@@ -67,14 +67,14 @@ The decrypted file is identical to the original — verified by comparing sizes.
 
 ### Directory mode (extra feature)
 
-Encrypt all .exe files in a folder recursively:
+Encrypt all files in a folder recursively:
 
 ```bash
 uv run encrypt-o-matic --dir ./some_folder AES 5 0-10000 30
 encrypt-o-matic.exe --dir C:\some_folder AES 5 0-10000 30
 ```
 
-This creates a `manifest.json` inside the folder that tracks what was encrypted. To decrypt everything:
+This creates a `manifest.json` inside the folder that tracks what was encrypted. To decrypt:
 
 ```bash
 uv run encrypt-o-matic --dir ./some_folder --password
@@ -92,6 +92,7 @@ encrypt-o-matic.exe --dir C:\some_folder --password
 5. Build a binary header with all the metadata (filename, sizes, timer, etc.)
 6. HMAC the header so nobody can hex-edit the timer or other fields
 7. Write header + encrypted data to `.encrypted` file
+8. Remove the original file so it can't be used until decrypted
 
 ### Decryption
 
@@ -100,6 +101,7 @@ encrypt-o-matic.exe --dir C:\some_folder --password
 3. Ask for password, check HMAC integrity, verify password against stored hash
 4. Decrypt, strip padding, decompress
 5. Check the size matches the original, write the file back
+6. Remove the `.encrypted` file
 
 ### Algorithms
 

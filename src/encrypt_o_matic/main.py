@@ -286,6 +286,7 @@ def encrypt_file(target_path, algorithm, size_mb, custom_var, duration_min, pass
         print("Timer:          disabled (password-only)")
     print(f"Output:         {output_path}")
 
+    os.remove(target_path)
     return output_path
 
 
@@ -353,6 +354,7 @@ def decrypt_file(encrypted_path, use_password=False, password=None, output_dir=N
 
     with open(out, "wb") as f:
         f.write(decompressed)
+    os.remove(encrypted_path)
     print(f"Decrypted: {out}")
     return out
 
@@ -366,11 +368,10 @@ def encrypt_directory(directory, algorithm, size_mb, custom_var, duration_min, p
     manifest = {"files": []}
     for root, _, files in os.walk(directory):
         for fname in files:
-            if fname.lower().endswith(".exe"):
-                fpath = os.path.join(root, fname)
-                print(f"\nEncrypting: {fpath}")
-                out = encrypt_file(fpath, algorithm, size_mb, custom_var, duration_min, password=password)
-                manifest["files"].append({"original": fpath, "encrypted": out})
+            fpath = os.path.join(root, fname)
+            print(f"\nEncrypting: {fpath}")
+            out = encrypt_file(fpath, algorithm, size_mb, custom_var, duration_min, password=password)
+            manifest["files"].append({"original": fpath, "encrypted": out})
 
     manifest_path = os.path.join(directory, "manifest.json")
     with open(manifest_path, "w") as f:
@@ -396,6 +397,8 @@ def decrypt_directory(directory, use_password):
         else:
             print(f"Skipping (not found): {entry['encrypted']}")
 
+    os.remove(manifest_path)
+
 
 # ---- helpers ----
 
@@ -413,24 +416,34 @@ def main():
     parser = argparse.ArgumentParser(
         prog="encrypt-o-matic",
         description="Encrypt and decrypt Windows executables",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         usage="%(prog)s <target_app> <encryption_algorithm> <size_manipulation> <custom_variable> <duration>\n"
               "       %(prog)s <encrypted_file> [--password]\n"
               "       %(prog)s --dir <directory> <encryption_algorithm> <size_manipulation> <custom_variable> <duration>\n"
               "       %(prog)s --dir <directory> --password",
+        epilog="Examples:\n"
+               "  %(prog)s app.exe AES 10 0-100000 60\n"
+               "    Encrypt app.exe with AES, add 10MB, custom op 0-100000, lock 60 min\n\n"
+               "  %(prog)s app.exe.encrypted --password\n"
+               "    Decrypt immediately with master password\n\n"
+               "  %(prog)s app.exe.encrypted\n"
+               "    Decrypt after timer expires\n\n"
+               "  %(prog)s --dir ./folder AES 5 0-10000 30\n"
+               "    Encrypt all files in folder recursively",
     )
     parser.add_argument("target_app", help="Path to the target application or encrypted file")
     parser.add_argument("encryption_algorithm", nargs="?", default=None,
-                        help="Encryption algorithm: AES, ChaCha20, or Twofish")
+                        help="Encryption algorithm (AES, ChaCha20, or Twofish)")
     parser.add_argument("size_manipulation", nargs="?", type=int, default=None,
-                        help="File size manipulation number in MB")
+                        help="File size increase in MB (e.g. 10 adds 10MB of padding)")
     parser.add_argument("custom_variable", nargs="?", default=None,
-                        help='Custom variable X as "start-end" (e.g., 0-100000)')
+                        help='Custom operation range as "start-end" (e.g. 0-100000)')
     parser.add_argument("duration", nargs="?", type=int, default=None,
-                        help="Encryption duration in minutes (0 = password-only)")
+                        help="Encryption duration in minutes (0 = no timer, password-only)")
     parser.add_argument("--password", action="store_true",
-                        help="Decrypt immediately with master password (bypass timer)")
+                        help="Decrypt immediately with master password, bypassing the timer")
     parser.add_argument("--dir", action="store_true",
-                        help="Treat target as a directory (encrypt/decrypt all files)")
+                        help="Treat target as a directory — encrypt/decrypt all files recursively")
 
     args = parser.parse_args()
 
