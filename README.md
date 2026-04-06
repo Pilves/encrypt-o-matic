@@ -10,12 +10,6 @@ Needs Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 uv sync
 ```
 
-For running tests:
-
-```bash
-uv sync --extra dev
-```
-
 To build a Windows .exe with PyInstaller:
 
 ```bash
@@ -27,19 +21,19 @@ uv run pyinstaller --onefile --name encrypt-o-matic src/encrypt_o_matic/main.py
 ### Encrypting
 
 ```bash
-uv run encrypt-o-matic encrypt <target_app> <algorithm> <size_mb> <custom_var> <duration_min>
+uv run encrypt-o-matic <target_app> <encryption_algorithm> <size_manipulation> <custom_variable> <duration>
 ```
 
 - `target_app` — path to the .exe you want to encrypt
-- `algorithm` — `AES`, `ChaCha20`, or `Twofish`
-- `size_mb` — how many MB of random data to add to the file
-- `custom_var` — range for the custom operation, like `0-100000`
-- `duration_min` — how long to keep it locked (in minutes, 0 = no timer)
+- `encryption_algorithm` — `AES`, `ChaCha20`, or `Twofish`
+- `size_manipulation` — how many MB of random data to add to the file
+- `custom_variable` — range for the custom operation, like `0-100000`
+- `duration` — how long to keep it locked (in minutes, 0 = no timer)
 
 Example:
 
 ```bash
-uv run encrypt-o-matic encrypt app.exe AES 10 0-100000 60
+uv run encrypt-o-matic app.exe AES 10 0-100000 60
 ```
 
 This encrypts `app.exe` with AES, adds 10MB of padding, does the custom operation from 0 to 100000, and locks it for 60 minutes. You'll be asked to set a master password.
@@ -48,12 +42,14 @@ The original file is kept, and the encrypted version is saved as `app.exe.encryp
 
 ### Decrypting
 
+The tool auto-detects encrypted files. Just pass the `.encrypted` file as the target:
+
 ```bash
 # decrypt right away with password
-uv run encrypt-o-matic decrypt app.exe.encrypted --password
+uv run encrypt-o-matic app.exe.encrypted --password
 
 # wait for timer to expire first
-uv run encrypt-o-matic decrypt app.exe.encrypted
+uv run encrypt-o-matic app.exe.encrypted
 ```
 
 Without `--password` it checks if the timer is up. If not, it tells you how long is left. With `--password` you can decrypt immediately regardless of the timer.
@@ -65,13 +61,13 @@ The decrypted file is identical to the original — verified by comparing sizes.
 Encrypt all .exe files in a folder recursively:
 
 ```bash
-uv run encrypt-o-matic encrypt --dir ./some_folder AES 5 0-10000 30
+uv run encrypt-o-matic --dir ./some_folder AES 5 0-10000 30
 ```
 
 This creates a `manifest.json` inside the folder that tracks what was encrypted. To decrypt everything:
 
 ```bash
-uv run encrypt-o-matic decrypt --dir ./some_folder --password
+uv run encrypt-o-matic --dir ./some_folder --password
 ```
 
 ## How it works

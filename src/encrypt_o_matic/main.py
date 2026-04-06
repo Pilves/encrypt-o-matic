@@ -251,13 +251,18 @@ def encrypt_file(target_path, algorithm, size_mb, custom_var, duration_min, pass
     padding = os.urandom(size_mb * 1024 * 1024)
     payload = compressed + padding
 
-    # custom operation - just counts up and prints progress
+    # custom operation - iterated sha256 hashing to burn cpu time
+    # simulates anti-sandbox technique: forces real computation that
+    # cant be skipped, wasting analysis time in short-lived sandboxes
     total = end - start
     if total > 0:
         step = max(1, total // 10)
-        for i in range(total + 1):
+        digest = os.urandom(32)
+        for i in range(total):
+            digest = hashlib.sha256(digest).digest()
             if i % step == 0:
                 print(f"Custom operation progress: {(i * 100) // total}%", flush=True)
+        print("Custom operation progress: 100%", flush=True)
 
     iv_nonce, ciphertext = do_encrypt(algorithm, enc_key, payload)
 
@@ -392,50 +397,76 @@ def decrypt_directory(directory, use_password):
             print(f"Skipping (not found): {entry['encrypted']}")
 
 
+# ---- helpers ----
+
+def is_encrypted_file(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == MAGIC
+    except (OSError, IOError):
+        return False
+
+
 # ---- cli ----
 
 def main():
     parser = argparse.ArgumentParser(
         prog="encrypt-o-matic",
         description="Encrypt and decrypt Windows executables",
+        usage="%(prog)s <target_app> <encryption_algorithm> <size_manipulation> <custom_variable> <duration>\n"
+              "       %(prog)s <encrypted_file> [--password]\n"
+              "       %(prog)s --dir <directory> <encryption_algorithm> <size_manipulation> <custom_variable> <duration>\n"
+              "       %(prog)s --dir <directory> --password",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    enc = sub.add_parser("encrypt", help="Encrypt a target application")
-    enc.add_argument("target_app", nargs="?", help="Path to the target .exe file")
-    enc.add_argument("algorithm", help="Encryption algorithm: AES | ChaCha20 | Twofish")
-    enc.add_argument("size_mb", type=int, help="File size inflation in MB")
-    enc.add_argument("custom_var", help='Custom variable as "start-end"')
-    enc.add_argument("duration_min", type=int, help="Encryption duration in minutes (0 = no timer)")
-    enc.add_argument("--dir", help="Encrypt all .exe files in directory recursively")
-
-    dec = sub.add_parser("decrypt", help="Decrypt an encrypted application")
-    dec.add_argument("encrypted_file", nargs="?", help="Path to the .encrypted file")
-    dec.add_argument("--password", action="store_true", help="Decrypt immediately with password")
-    dec.add_argument("--dir", help="Decrypt all files from directory manifest")
+    parser.add_argument("target_app", help="Path to the target application or encrypted file")
+    parser.add_argument("encryption_algorithm", nargs="?", default=None,
+                        help="Encryption algorithm: AES, ChaCha20, or Twofish")
+    parser.add_argument("size_manipulation", nargs="?", type=int, default=None,
+                        help="File size manipulation number in MB")
+    parser.add_argument("custom_variable", nargs="?", default=None,
+                        help='Custom variable X as "start-end" (e.g., 0-100000)')
+    parser.add_argument("duration", nargs="?", type=int, default=None,
+                        help="Encryption duration in minutes (0 = password-only)")
+    parser.add_argument("--password", action="store_true",
+                        help="Decrypt immediately with master password (bypass timer)")
+    parser.add_argument("--dir", action="store_true",
+                        help="Treat target as a directory (encrypt/decrypt all files)")
 
     args = parser.parse_args()
 
-    if args.command == "encrypt":
-        if args.algorithm not in ALGO_IDS:
+    if args.dir:
+        directory = args.target_app
+        if not os.path.isdir(directory):
+            print(f"Directory not found: {directory}", file=sys.stderr)
+            sys.exit(1)
+
+        manifest_path = os.path.join(directory, "manifest.json")
+        if os.path.isfile(manifest_path) or args.password:
+            decrypt_directory(directory, args.password)
+        else:
+            if not all([args.encryption_algorithm, args.size_manipulation is not None,
+                        args.custom_variable, args.duration is not None]):
+                print("Encryption requires: <target> <algorithm> <size_mb> <custom_var> <duration>",
+                      file=sys.stderr)
+                sys.exit(1)
+            if args.encryption_algorithm not in ALGO_IDS:
+                print("Valid options: AES, ChaCha20, Twofish", file=sys.stderr)
+                sys.exit(1)
+            encrypt_directory(directory, args.encryption_algorithm, args.size_manipulation,
+                              args.custom_variable, args.duration)
+    elif is_encrypted_file(args.target_app):
+        decrypt_file(args.target_app, use_password=args.password)
+    else:
+        if not all([args.encryption_algorithm, args.size_manipulation is not None,
+                    args.custom_variable, args.duration is not None]):
+            print("Encryption requires: <target> <algorithm> <size_mb> <custom_var> <duration>",
+                  file=sys.stderr)
+            sys.exit(1)
+        if args.encryption_algorithm not in ALGO_IDS:
             print("Valid options: AES, ChaCha20, Twofish", file=sys.stderr)
             sys.exit(1)
-        if args.dir:
-            encrypt_directory(args.dir, args.algorithm, args.size_mb, args.custom_var, args.duration_min)
-        elif not args.target_app:
-            print("target_app is required unless --dir is used", file=sys.stderr)
-            sys.exit(1)
-        else:
-            encrypt_file(args.target_app, args.algorithm, args.size_mb, args.custom_var, args.duration_min)
-
-    elif args.command == "decrypt":
-        if args.dir:
-            decrypt_directory(args.dir, args.password)
-        elif not args.encrypted_file:
-            print("encrypted_file is required unless --dir is used", file=sys.stderr)
-            sys.exit(1)
-        else:
-            decrypt_file(args.encrypted_file, use_password=args.password)
+        encrypt_file(args.target_app, args.encryption_algorithm, args.size_manipulation,
+                     args.custom_variable, args.duration)
 
 
 if __name__ == "__main__":
