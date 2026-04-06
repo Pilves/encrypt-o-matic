@@ -118,7 +118,7 @@ The HMAC covers everything above it in the header. This means if someone tries t
 
 ### Custom operation
 
-The custom variable is a range like `0-100000`. The program just iterates from start to end and prints progress every 10%. It's a simple time-consuming step — makes the encryption process take longer, which is part of the assignment requirements.
+The custom variable is a range like `0-100000`. The program performs iterated SHA-256 hashing — starting from a random 32-byte seed, it chains that many hash rounds. This simulates an anti-sandbox technique: it forces real computation that can't be skipped, wasting analysis time in short-lived sandboxes. Progress is printed every 10%.
 
 ## Extra features
 
