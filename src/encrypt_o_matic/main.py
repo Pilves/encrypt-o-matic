@@ -132,7 +132,7 @@ ALGO_NAMES = {0: "AES", 1: "ChaCha20", 2: "Twofish"}
 
 
 def build_header(algo_id, filename, original_size, argon2_hash,
-                 salt, iv_nonce, expiry, hmac_key, padding_size):
+                 salt, iv_nonce, expiry, hmac_key, padding_size, enc_key):
     fname = filename.encode("utf-8")
     # argon2 hash string gets padded to exactly 128 bytes
     ahash = argon2_hash.encode("utf-8").ljust(128, b"\x00")[:128]
@@ -155,6 +155,10 @@ def build_header(algo_id, filename, original_size, argon2_hash,
 
     hdr.append(1)                                   # compressed flag (always on)
     hdr.extend(struct.pack("<Q", padding_size))     # 8 bytes
+
+    # store enc key XORed with hash of salt for timer-based auto-decrypt
+    key_mask = hashlib.sha256(salt).digest()
+    hdr.extend(bytes(a ^ b for a, b in zip(enc_key, key_mask)))  # 32 bytes
 
     return bytes(hdr)
 
@@ -194,6 +198,11 @@ def parse_header(data):
     compressed = data[pos]; pos += 1
     padding_size = struct.unpack_from("<Q", data, pos)[0]; pos += 8
 
+    # recover stored encryption key
+    stored_key_xored = data[pos:pos + 32]; pos += 32
+    key_mask = hashlib.sha256(salt).digest()
+    stored_enc_key = bytes(a ^ b for a, b in zip(stored_key_xored, key_mask))
+
     return {
         "algo_id": algo_id,
         "filename": filename,
@@ -205,6 +214,7 @@ def parse_header(data):
         "hmac_data": hmac_data,
         "stored_hmac": stored_hmac,
         "padding_size": padding_size,
+        "stored_enc_key": stored_enc_key,
         "payload": data[pos:],
     }
 
@@ -270,7 +280,7 @@ def encrypt_file(target_path, algorithm, size_mb, custom_var, duration_min, pass
 
     header = build_header(
         ALGO_IDS[algorithm], filename, original_size, argon2_hash,
-        salt, iv_nonce, expiry, hmac_key, len(padding),
+        salt, iv_nonce, expiry, hmac_key, len(padding), enc_key,
     )
 
     output_path = target_path + ".encrypted"
@@ -304,34 +314,41 @@ def decrypt_file(encrypted_path, use_password=False, password=None, output_dir=N
         print(str(e), file=sys.stderr)
         sys.exit(1)
 
-    # if theres a timer and it hasnt expired yet, block unless --password
+    # timer has a value and hasnt expired yet - block unless --password
     if not use_password and hdr["expiry"] > 0 and time.time() < hdr["expiry"]:
         left = max(0, int(hdr["expiry"] - time.time()))
         print(f"File encrypted for {left // 60}m {left % 60}s more. Use --password to decrypt early.")
         sys.exit(0)
 
-    if password is None:
-        password = prompt_password(confirm=False)
+    # timer expired - auto-decrypt using the stored key (no password needed)
+    timer_expired = hdr["expiry"] > 0 and time.time() >= hdr["expiry"]
 
-    # check hmac first - catches tampering before we even try decryption
-    hmac_key = derive_hmac_key(password, hdr["salt"])
-    if not check_hmac(hmac_key, hdr["hmac_data"], hdr["stored_hmac"]):
-        print("File corrupted or tampered with", file=sys.stderr)
-        sys.exit(1)
+    if timer_expired and not use_password:
+        enc_key = hdr["stored_enc_key"]
+    else:
+        # password-based path: either --password flag or no timer (duration=0)
+        if password is None:
+            password = prompt_password(confirm=False)
 
-    # verify the password against the stored argon2 hash
-    try:
-        _hasher.verify(hdr["argon2_hash"], password)
-    except VerifyMismatchError:
-        print("Invalid password", file=sys.stderr)
-        sys.exit(1)
+        # check hmac first - catches tampering before we even try decryption
+        hmac_key = derive_hmac_key(password, hdr["salt"])
+        if not check_hmac(hmac_key, hdr["hmac_data"], hdr["stored_hmac"]):
+            print("File corrupted or tampered with", file=sys.stderr)
+            sys.exit(1)
+
+        # verify the password against the stored argon2 hash
+        try:
+            _hasher.verify(hdr["argon2_hash"], password)
+        except VerifyMismatchError:
+            print("Invalid password", file=sys.stderr)
+            sys.exit(1)
+
+        enc_key = derive_key(password, hdr["salt"])
 
     algo_name = ALGO_NAMES.get(hdr["algo_id"])
     if not algo_name:
         print("Unknown algorithm", file=sys.stderr)
         sys.exit(1)
-
-    enc_key = derive_key(password, hdr["salt"])
     try:
         decrypted = do_decrypt(algo_name, enc_key, hdr["iv_nonce"], hdr["payload"])
     except Exception:
@@ -389,7 +406,9 @@ def decrypt_directory(directory, use_password):
     with open(manifest_path) as f:
         manifest = json.load(f)
 
-    password = prompt_password(confirm=False)
+    password = None
+    if use_password:
+        password = prompt_password(confirm=False)
     for entry in manifest["files"]:
         if os.path.isfile(entry["encrypted"]):
             print(f"\nDecrypting: {entry['encrypted']}")
